@@ -1,5 +1,5 @@
-import { interval, animationFrameScheduler, merge, fromEvent, BehaviorSubject, race } from 'rxjs'
-import { share, map, startWith, scan, withLatestFrom, takeUntil, mergeAll, mergeMap, tap, filter } from 'rxjs/operators'
+import { interval, animationFrameScheduler, merge, fromEvent, BehaviorSubject, Subject } from 'rxjs'
+import { share, map, startWith, scan, withLatestFrom, takeUntil, mergeMap, tap, filter } from 'rxjs/operators'
 
 
 // 常量
@@ -20,6 +20,7 @@ const playerImg = loadImage('images/hero.png')
 const enemyImg = loadImage('images/enemy.png')
 const bulletImg = loadImage('images/bullet.png')
 const atlas = loadImage('images/Common.png')
+const aniImgs = Array(19).fill().map((_, i) => loadImage(`images/explosion${i+1}.png`))
 const bgmAudio = loadAudio('audio/bgm.mp3', {loop: true})
 const bulletAudio = loadAudio('audio/bullet.mp3')
 const boomAudio = loadAudio('audio/boom.mp3')
@@ -73,7 +74,10 @@ function getInitState() {
     },
     enemies: [],
     bullets: [],
-    anims: {},
+    explosions: {
+      images: aniImgs,
+      frames: []
+    },
     gameover: false,
     score: 0
   }
@@ -158,6 +162,29 @@ const bullets$ = clock$.pipe(
   })
 )
 
+const explosionSubject$ = new Subject()
+const newExplo$ = explosionSubject$.pipe(
+  map(enemy => state => {
+    const frame = Object.assign({}, enemy, {index: 0})
+    state.explosions.frames.push(frame)
+    
+    return state
+  })
+)
+const exploPlay$ = clock$.pipe(
+  map(() => state => {
+    for (const frame of state.explosions.frames) {
+      frame.index += 1
+      frame.y += 6
+    }
+
+    state.explosions.frames = state.explosions.frames.filter(frame => frame.index < state.explosions.images.length)
+
+    return state
+  })
+)
+
+const explosions$ = merge(exploPlay$, newExplo$)
 
 const enemies$ = merge(clock$)
   .pipe(
@@ -198,6 +225,7 @@ const collision$ = clock$.pipe(
           state.enemies.splice(index, 1)
           boomAudio.play()
           state.score += 1
+          explosionSubject$.next(enemy)
           return false
         }
         
@@ -229,7 +257,7 @@ const restart$ = touchstart$.pipe(
   map(() => state => state.gameover ? getInitState() : state)
 )
 
-const state$ = merge(bg$, player$, enemies$, bullets$, collision$, restart$)
+const state$ = merge(bg$, player$, enemies$, bullets$, collision$, explosions$, restart$)
   .pipe(
     startWith(getInitState()),
     scan((state, reducer) => reducer(state))
@@ -250,7 +278,8 @@ function render(state) {
     state.bullets,
     state.enemies
   ).forEach(item => renderSprite(ctx, item))
-  
+
+  renderExplosions(ctx, state)
   renderScore(ctx, state)
   if (state.gameover) renderGameover(ctx, state)
 }
@@ -290,6 +319,19 @@ function renderSprite(ctx, {img, x, y, width, height}) {
     height
   )
 }
+
+function renderExplosions(ctx, {explosions: {images, frames}}) {
+  frames.forEach(frame => {
+    ctx.drawImage(
+      images[frame.index],
+      frame.x,
+      frame.y,
+      frame.width * 1.2,
+      frame.height * 1.2
+    )
+  })
+}
+
 
 function renderScore(ctx, {score}) {
   ctx.fillStyle = "#ffffff"
