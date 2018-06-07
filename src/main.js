@@ -1,4 +1,4 @@
-import { interval, animationFrameScheduler, merge, fromEvent, BehaviorSubject } from 'rxjs'
+import { interval, animationFrameScheduler, merge, fromEvent, BehaviorSubject, race } from 'rxjs'
 import { share, map, startWith, scan, withLatestFrom, takeUntil, mergeAll, mergeMap, tap, filter } from 'rxjs/operators'
 
 
@@ -19,9 +19,21 @@ const bgImg = loadImage('images/bg.jpg')
 const playerImg = loadImage('images/hero.png')
 const enemyImg = loadImage('images/enemy.png')
 const bulletImg = loadImage('images/bullet.png')
+const atlas = loadImage('images/Common.png')
 const bgmAudio = loadAudio('audio/bgm.mp3', {loop: true})
 const bulletAudio = loadAudio('audio/bullet.mp3')
 const boomAudio = loadAudio('audio/boom.mp3')
+
+/**
+ * 重新开始按钮区域
+ * 方便简易判断按钮点击
+ */
+const btnArea = {
+  startX: screenWidth / 2 - 40,
+  startY: screenHeight / 2 - 100 + 180,
+  endX  : screenWidth / 2  + 50,
+  endY  : screenHeight / 2 - 100 + 255
+}
 
 function loadImage(path) {
   const img = new Image()
@@ -62,7 +74,8 @@ function getInitState() {
     enemies: [],
     bullets: [],
     anims: {},
-    gameover: false
+    gameover: false,
+    score: 0
   }
 }
 
@@ -74,6 +87,8 @@ const clock$ = interval(1000 / FPS, animationFrameScheduler)
 const bg$ = clock$
   .pipe(
     map(() => state => {
+      if (state.gameover) return state
+
       state.bg.top = state.bg.top > screenHeight ? 0 : state.bg.top + 2
       return state
     })
@@ -82,7 +97,7 @@ const bg$ = clock$
 
 const playerSubject$ = new BehaviorSubject()
 
-const touchstart$ = fromEvent(canvas, 'touchstart')
+const touchstart$ = fromEvent(canvas, 'touchstart').pipe(share())
 const touchend$ = fromEvent(canvas, 'touchend')
 const touchmove$ = fromEvent(canvas, 'touchmove')
 
@@ -102,6 +117,8 @@ const playerMove$ = touchstart$.pipe(
 const player$ = playerMove$
   .pipe(
     map(({clientX, clientY}) => (state) => {
+      if (state.gameover) return state
+
       const {player} = state
       player.x = range(clientX - player.width / 2, 0, screenWidth - player.width) 
       player.y = range(clientY - player.height / 2, 0, screenHeight - player.height) 
@@ -113,6 +130,8 @@ const player$ = playerMove$
 
 const bullets$ = clock$.pipe(
   map(frame => state => {
+    if (state.gameover) return state
+
     const player = state.player
 
     // 移动子弹
@@ -143,6 +162,8 @@ const bullets$ = clock$.pipe(
 const enemies$ = merge(clock$)
   .pipe(
     map(frame => state => {
+      if (state.gameover) return state
+
       // 移动敌机
       state.enemies.forEach(function(enemy, index) {
         enemy.y += 6
@@ -169,11 +190,18 @@ const enemies$ = merge(clock$)
 
 const collision$ = clock$.pipe(
   map(() => state => {
+    if (state.gameover) return state
+
     state.bulltes = state.bullets.filter(bullet => {
       state.enemies.every((enemy, index) => {
-        return isCollideWith(enemy, bullet)
-          ? state.enemies.splice(index, 1) && boomAudio.play() && false
-          : true
+        if (isCollideWith(enemy, bullet)) {
+          state.enemies.splice(index, 1)
+          boomAudio.play()
+          state.score += 1
+          return false
+        }
+        
+        return true
       })
     })
 
@@ -187,11 +215,21 @@ const collision$ = clock$.pipe(
   })
 )
 
-const gameover$ = clock$.pipe(
+const restart$ = touchstart$.pipe(
+  filter(ev => {
+    const {clientX, clientY} = ev.touches[0]
+
+    return (
+      clientX > btnArea.startX
+      && clientX < btnArea.endX
+      && clientY > btnArea.startY
+      && clientY < btnArea.endY
+    )
+  }),
   map(() => state => state.gameover ? getInitState() : state)
 )
 
-const state$ = merge(bg$, player$, enemies$, bullets$, collision$, gameover$)
+const state$ = merge(bg$, player$, enemies$, bullets$, collision$, restart$)
   .pipe(
     startWith(getInitState()),
     scan((state, reducer) => reducer(state))
@@ -206,13 +244,18 @@ state$.subscribe(function(state) {
 // 画图
 function render(state) {
   const ctx = canvas.getContext('2d')
-  renderBg(ctx, state.bg)
-  state.enemies.forEach(enemy => renderSprite(ctx, enemy))
-  renderSprite(ctx, state.player)
-  state.bullets.forEach(bullet => renderSprite(ctx, bullet))
+  renderBg(ctx, state)
+  
+  ;[state.player].concat(
+    state.bullets,
+    state.enemies
+  ).forEach(item => renderSprite(ctx, item))
+  
+  renderScore(ctx, state)
+  if (state.gameover) renderGameover(ctx, state)
 }
 
-function renderBg(ctx, bg) {
+function renderBg(ctx, {bg}) {
   ctx.drawImage(
     bg.img,
     0,
@@ -245,6 +288,50 @@ function renderSprite(ctx, {img, x, y, width, height}) {
     y,
     width,
     height
+  )
+}
+
+function renderScore(ctx, {score}) {
+  ctx.fillStyle = "#ffffff"
+  ctx.font      = "20px Arial"
+
+  ctx.fillText(
+    score,
+    10,
+    30
+  )
+}
+
+function renderGameover(ctx, {score}) {
+  ctx.drawImage(atlas, 0, 0, 119, 108, screenWidth / 2 - 150, screenHeight / 2 - 100, 300, 300)
+
+  ctx.fillStyle = "#ffffff"
+  ctx.font    = "20px Arial"
+
+  ctx.fillText(
+    '游戏结束',
+    screenWidth / 2 - 40,
+    screenHeight / 2 - 100 + 50
+  )
+
+  ctx.fillText(
+    '得分: ' + score,
+    screenWidth / 2 - 40,
+    screenHeight / 2 - 100 + 130
+  )
+
+  ctx.drawImage(
+    atlas,
+    120, 6, 39, 24,
+    screenWidth / 2 - 60,
+    screenHeight / 2 - 100 + 180,
+    120, 40
+  )
+
+  ctx.fillText(
+    '重新开始',
+    screenWidth / 2 - 40,
+    screenHeight / 2 - 100 + 205
   )
 }
 
