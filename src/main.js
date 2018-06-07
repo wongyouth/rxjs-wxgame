@@ -33,29 +33,37 @@ function loadAudio(path, {loop=false}={}) {
   const audio = new Audio()
   audio.loop = loop
   audio.src = path
-  return audio
+  return {
+    play() {
+      audio.currentTime = 0
+      audio.play()
+    }
+  }
 }
 
 /**
  * 初始状态
  */
-const initState = {
-  bg: {
-    img: bgImg,
-    width: BG_WIDTH,
-    height: BG_HEIGHT,
-    top: 0
-  },
-  player: {
-    img: playerImg,
-    width: PLAYER_WIDTH,
-    height: PLAYER_HEIGHT,
-    x: screenWidth / 2 - PLAYER_WIDTH / 2,
-    y: screenHeight - PLAYER_HEIGHT - 30
-  },
-  enemies: [],
-  bullets: [],
-  anims: []
+function getInitState() {
+  return {
+    bg: {
+      img: bgImg,
+      width: BG_WIDTH,
+      height: BG_HEIGHT,
+      top: 0
+    },
+    player: {
+      img: playerImg,
+      width: PLAYER_WIDTH,
+      height: PLAYER_HEIGHT,
+      x: screenWidth / 2 - PLAYER_WIDTH / 2,
+      y: screenHeight - PLAYER_HEIGHT - 30
+    },
+    enemies: [],
+    bullets: [],
+    anims: {},
+    gameover: false
+  }
 }
 
 // 时钟
@@ -97,17 +105,15 @@ const playerMove$ = touchstart$.pipe(
   // tap(console.log),
 )
 
-const player$ = clock$
+const player$ = playerMove$
   .pipe(
-    withLatestFrom(playerMove$),
-    map(([_, {clientX, clientY}]) => (state) => {
+    map(({clientX, clientY}) => (state) => {
       const {player} = state
       player.x = range(clientX - player.width / 2, 0, screenWidth - player.width) 
       player.y = range(clientY - player.height / 2, 0, screenHeight - player.height) 
 
       return state
-    }),
-    share()
+    })
   )
 
 
@@ -134,7 +140,6 @@ const bullets$ = clock$.pipe(
         height: BULLET_HEIGHT
       })
 
-      bulletAudio.currentTime = 0
       bulletAudio.play()
     }
     return state
@@ -170,10 +175,34 @@ const enemies$ = merge(clock$)
     })
   )
 
-const state$ = merge(bg$, player$, enemies$, bullets$)
+const collision$ = clock$.pipe(
+  map(() => state => {
+    state.bulltes = state.bullets.filter(bullet => {
+      state.enemies.every((enemy, index) => {
+        return isCollideWith(enemy, bullet)
+          ? state.enemies.splice(index, 1) && boomAudio.play() && false
+          : true
+      })
+    })
+
+    for (const enemy of state.enemies) {
+      if (isCollideWith(state.player, enemy)) {
+        state.gameover = true
+        break
+      }
+    }
+    return state
+  })
+)
+
+const gameover$ = clock$.pipe(
+  map(() => state => state.gameover ? getInitState() : state)
+)
+
+const state$ = merge(bg$, player$, enemies$, bullets$, collision$, gameover$)
   .pipe(
-    startWith(initState),
-    scan((state, reducer) => reducer(state))  
+    startWith(getInitState()),
+    scan((state, reducer) => reducer(state))
   )
 
 bgmAudio.play()
