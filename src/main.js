@@ -70,12 +70,6 @@ function getInitState() {
 const clock$ = interval(1000 / FPS, animationFrameScheduler)
   .pipe(share())
 
-// 时钟计数
-const frame$ = clock$.pipe(
-  startWith(0),
-  map(x => x + 1)
-)
-
 // 背景
 const bg$ = clock$
   .pipe(
@@ -118,8 +112,7 @@ const player$ = playerMove$
 
 
 const bullets$ = clock$.pipe(
-  withLatestFrom(frame$),
-  map(([_, frame]) => state => {
+  map(frame => state => {
     const player = state.player
 
     // 移动子弹
@@ -149,8 +142,7 @@ const bullets$ = clock$.pipe(
 
 const enemies$ = merge(clock$)
   .pipe(
-    withLatestFrom(frame$),
-    map(([_, frame]) => state => {
+    map(frame => state => {
       // 移动敌机
       state.enemies.forEach(function(enemy, index) {
         enemy.y += 6
